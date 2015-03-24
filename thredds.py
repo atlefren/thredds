@@ -12,6 +12,10 @@ def to_celsius(kelvin):
 wcs = WebCoverageService('http://thredds.met.no/thredds/wcs/arome25/arome_metcoop_test2_5km_latest.nc?service=WCS&version=1.0.0&request=GetCapabilities')
 
 
+def geojson_point(lon, lat):
+    return {'type': 'Point', 'coordinates': [lon, lat]}
+
+
 def lambert_to_latlon(x, y):
     p1 = Proj('+proj=lcc +lat_0=63 +lon_0=15 +lat_1=63 +lat_2=63 +no_defs +R=6.371e+06')
     lon, lat = p1(x, y, inverse=True)
@@ -33,21 +37,32 @@ def parse_netcdf(coverage, identifier):
     data = coverage.variables[identifier].data
     units = coverage.variables[identifier].units
     z = 0
+
+    result_data = []
+
     for time, time_value in enumerate(times):
         time_data = datetime.datetime.fromtimestamp(time_value)
-        print 'time: %s' % time_data
+        #print 'time: %s' % time_data
         for x, x_value in enumerate(coverage.variables['x'].data):
             for y, y_value in enumerate(coverage.variables['y'].data):
                 lat, lon = lambert_to_latlon(x_value, y_value)
                 data = coverage.variables[identifier].data[time][z][y][x]
-                print '\tpos: %s, %s' % (lat, lon)
-                print '\t\t%s: %s %s' % (identifier, data, units)
+                result_data.append({
+                    'position': geojson_point(lon, lat),
+                    'time': time_data,
+                    'units': units,
+                    'data': data,
+                    'identifier': identifier
+                })
+                #print '\tpos: %s, %s' % (lat, lon)
+                #print '\t\t%s: %s %s' % (identifier, data, units)
+    return result_data
 
 layers = [
-    'air_temperature_ml',
-    'wind_speed_of_gust',
-    'turbulent_kinetic_energy_pl',
-    'x_wind_10m',
+    #'air_temperature_ml',
+    #'wind_speed_of_gust',
+    #'turbulent_kinetic_energy_pl',
+    #'x_wind_10m',
     'y_wind_10m'
 ]
 
@@ -62,6 +77,6 @@ items = wcs.items()
 
 print "data for bbox [%s, %s, %s, %s]:\n" % bbox
 for identifier in layers:
-    print identifier
+    
     coverage = get_coverage(identifier, bbox)
-    parse_netcdf(coverage, identifier)
+    print parse_netcdf(coverage, identifier)
