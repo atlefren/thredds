@@ -3,6 +3,7 @@ from scipy.io import netcdf
 from pyproj import Proj
 import io
 import datetime
+import json
 
 
 def to_celsius(kelvin):
@@ -12,12 +13,17 @@ def to_celsius(kelvin):
 wcs = WebCoverageService('http://thredds.met.no/thredds/wcs/arome25/arome_metcoop_test2_5km_latest.nc?service=WCS&version=1.0.0&request=GetCapabilities')
 
 
-def geojson_point(lon, lat):
-    return {'type': 'Point', 'coordinates': [lon, lat]}
+def geojson_feature(lon, lat):
+    return {
+        'type': 'Feature',
+        'properties': {},
+        'geometry': {'type': 'Point', 'coordinates': [lon, lat]}
+    }
 
 
 def lambert_to_latlon(x, y):
-    p1 = Proj('+proj=lcc +lat_0=63 +lon_0=15 +lat_1=63 +lat_2=63 +no_defs +R=6.371e+06')
+    proj_str = '+proj=lcc +lat_0=63 +lon_0=15 +lat_1=63 +lat_2=63 +no_defs +R=6.371e+06 +units=m'
+    p1 = Proj(proj_str)
     lon, lat = p1(x, y, inverse=True)
     return lat, lon
 
@@ -38,31 +44,34 @@ def parse_netcdf(coverage, identifier):
     units = coverage.variables[identifier].units
     z = 0
 
-    result_data = []
+    features = []
 
-    for time, time_value in enumerate(times):
-        time_data = datetime.datetime.fromtimestamp(time_value)
-        #print 'time: %s' % time_data
-        for x, x_value in enumerate(coverage.variables['x'].data):
-            for y, y_value in enumerate(coverage.variables['y'].data):
-                lat, lon = lambert_to_latlon(x_value, y_value)
+    for x, x_value in enumerate(coverage.variables['x'].data):
+        for y, y_value in enumerate(coverage.variables['y'].data):
+            lat, lon = lambert_to_latlon(x_value * 1000, y_value * 1000)
+            feature = geojson_feature(lon, lat)
+            time_values = []
+            for time, time_value in enumerate(times):
+                time_data = datetime.datetime.fromtimestamp(time_value)
                 data = coverage.variables[identifier].data[time][z][y][x]
-                result_data.append({
-                    'position': geojson_point(lon, lat),
-                    'time': time_data,
-                    'units': units,
-                    'data': data,
-                    'identifier': identifier
+                time_values.append({
+                    'time': time_data.isoformat(),
+                    'data': data.item(),
                 })
-                #print '\tpos: %s, %s' % (lat, lon)
-                #print '\t\t%s: %s %s' % (identifier, data, units)
-    return result_data
+            feature['properties']['times'] = time_values
+            feature['properties']['units'] = units
+            feature['properties']['identifier'] = identifier
+            features.append(feature)
+    return {
+        'type': 'FeatureCollection',
+        'features': features
+    }
 
 layers = [
-    #'air_temperature_ml',
-    #'wind_speed_of_gust',
-    #'turbulent_kinetic_energy_pl',
-    #'x_wind_10m',
+    'air_temperature_ml',
+    'wind_speed_of_gust',
+    'turbulent_kinetic_energy_pl',
+    'x_wind_10m',
     'y_wind_10m'
 ]
 
@@ -77,6 +86,8 @@ items = wcs.items()
 
 print "data for bbox [%s, %s, %s, %s]:\n" % bbox
 for identifier in layers:
-    
+    print identifier
     coverage = get_coverage(identifier, bbox)
-    print parse_netcdf(coverage, identifier)
+    d = parse_netcdf(coverage, identifier)
+    with open(identifier + '.geojson', 'w') as f:
+        f.write(json.dumps(d, indent=4))
